@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dota Timer</title>
+  <script src="https://unpkg.com/react/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/babel-standalone"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lodash"></script>
+  <script src="https://unpkg.com/@heroicons/react/solid"></script>
+  <script src="https://unpkg.com/lucide-react"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } = window;
+    const { Play, Pause, Settings, Volume2, VolumeX } = lucide.createReactComponents();
+    const { Switch, Slider, Label, Checkbox } = window;
+
+    const DotaTimer = () => {
+      const [isRunning, setIsRunning] = React.useState(false);
+      const [gameTime, setGameTime] = React.useState(0);
+      const [warningTime, setWarningTime] = React.useState(15);
+      const [notifications, setNotifications] = React.useState([]);
+      const [eventTimers, setEventTimers] = React.useState({
+        roshanKilled: null,
+        tormentorKilled: null,
+      });
+      
+      const [audio] = React.useState(new Audio('/api/placeholder/audio/notification.mp3'));
+      const [soundEnabled, setSoundEnabled] = React.useState(true);
+      const [volume, setVolume] = React.useState(1);
+
+      const [enabledEvents, setEnabledEvents] = React.useState({
+        bounty: true,
+        water: true,
+        power: true,
+        outpost: true,
+        jungle: true,
+        dayNight: true,
+        roshan: true,
+        tormentor: true,
+      });
+      
+      const regularEvents = [
+        {
+          id: 'bounty',
+          name: 'Bounty Runen',
+          icon: '💰',
+          initialSpawn: 0,
+          interval: 180,
+          checkTime: (time) => time % 180 === 0,
+        },
+        {
+          id: 'water',
+          name: 'Water Runen',
+          icon: '💧',
+          initialSpawn: 120,
+          interval: 120,
+          checkTime: (time) => time <= 360 && time % 120 === 0,
+        },
+        {
+          id: 'power',
+          name: 'Power Runen',
+          icon: '⚡',
+          initialSpawn: 360,
+          interval: 120,
+          checkTime: (time) => time >= 360 && time % 120 === 0,
+        },
+        {
+          id: 'outpost',
+          name: 'Outpost XP',
+          icon: '🏰',
+          initialSpawn: 420,
+          interval: 420,
+          checkTime: (time) => time % 420 === 0 && time > 0,
+        },
+        {
+          id: 'jungle',
+          name: 'Jungle Creeps',
+          icon: '🐺',
+          initialSpawn: 60,
+          interval: 60,
+          checkTime: (time) => time >= 60 && time % 60 === 0,
+        },
+        {
+          id: 'dayNight',
+          name: 'Tag/Nacht Wechsel',
+          icon: '🌓',
+          initialSpawn: 300,
+          interval: 300,
+          checkTime: (time) => time >= 300 && time % 300 === 0,
+        },
+      ];
+React.useEffect(() => {
+        let interval;
+        if (isRunning) {
+          interval = setInterval(() => {
+            setGameTime(prev => prev + 1);
+          }, 1000);
+        }
+        return () => clearInterval(interval);
+      }, [isRunning]);
+
+      const playNotificationSound = React.useCallback(() => {
+        if (soundEnabled) {
+          audio.volume = volume;
+          audio.play().catch(e => console.error('Error playing sound:', e));
+        }
+      }, [audio, soundEnabled, volume]);
+
+      const adjustTime = (amount) => {
+        setGameTime(prev => Math.max(0, prev + amount));
+      };
+
+      React.useEffect(() => {
+        regularEvents.forEach(event => {
+          if (enabledEvents[event.id]) {
+            const timeUntilNext = getTimeUntilNext(event, gameTime);
+            if (timeUntilNext === warningTime) {
+              addNotification(event.name, event.icon);
+              playNotificationSound();
+            }
+          }
+        });
+
+        if (eventTimers.roshanKilled && enabledEvents.roshan) {
+          const timeSinceKill = gameTime - eventTimers.roshanKilled;
+          const minRespawnTime = 8 * 60;
+          const maxRespawnTime = 11 * 60;
+          
+          if (timeSinceKill === (minRespawnTime - warningTime)) {
+            addNotification('Roshan Minimum Respawn', '🛡️');
+            playNotificationSound();
+          }
+          if (timeSinceKill === minRespawnTime) {
+            addNotification('Roshan kann jetzt spawnen!', '🛡️');
+            playNotificationSound();
+          }
+          if (timeSinceKill === (maxRespawnTime - warningTime)) {
+            addNotification('Roshan Maximum Respawn', '🛡️');
+            playNotificationSound();
+          }
+          if (timeSinceKill === maxRespawnTime) {
+            addNotification('Roshan muss jetzt gespawnt sein!', '🛡️');
+            playNotificationSound();
+          }
+        }
+
+        if (eventTimers.tormentorKilled && enabledEvents.tormentor) {
+          const timeSinceKill = gameTime - eventTimers.tormentorKilled;
+          if (timeSinceKill === (10 * 60 - warningTime)) {
+            addNotification('Tormentor Respawn', '⚔️');
+            playNotificationSound();
+          }
+        }
+      }, [gameTime, warningTime, eventTimers, playNotificationSound, enabledEvents]);
+
+      const getTimeUntilNext = (event, currentTime) => {
+        if (currentTime < event.initialSpawn) {
+          return event.initialSpawn - currentTime;
+        }
+        const timeSinceInitial = currentTime - event.initialSpawn;
+        const nextOccurrence = event.interval - (timeSinceInitial % event.interval);
+        return nextOccurrence;
+      };
+
+      const getUpcomingEvents = () => {
+        let events = regularEvents
+          .filter(event => enabledEvents[event.id])
+          .map(event => ({
+            ...event,
+            timeUntil: getTimeUntilNext(event, gameTime)
+          }));
+
+        if (eventTimers.roshanKilled && enabledEvents.roshan) {
+          const timeSinceKill = gameTime - eventTimers.roshanKilled;
+          const minRespawnTime = 8 * 60;
+          const maxRespawnTime = 11 * 60;
+          
+          if (timeSinceKill < minRespawnTime) {
+            events.push({
+              name: 'Roshan Minimum Spawn',
+              icon: '🛡️',
+              timeUntil: minRespawnTime - timeSinceKill
+            });
+          }
+          
+          if (timeSinceKill < maxRespawnTime) {
+            events.push({
+              name: 'Roshan Maximum Spawn',
+              icon: '🛡️',
+              timeUntil: maxRespawnTime - timeSinceKill
+            });
+          }
+        }
+
+        if (eventTimers.tormentorKilled && enabledEvents.tormentor) {
+          const timeSinceKill = gameTime - eventTimers.tormentorKilled;
+          const respawnTime = 10 * 60;
+          
+          if (timeSinceKill < respawnTime) {
+            events.push({
+              name: 'Tormentor Spawn',
+              icon: '⚔️',
+              timeUntil: respawnTime - timeSinceKill
+            });
+          }
+        }
+
+        return events
+          .filter(event => event.timeUntil <= warningTime)
+          .sort((a, b) => a.timeUntil - b.timeUntil);
+      };
+const addNotification = (eventName, icon) => {
+        const newNotification = {
+          id: Date.now(),
+          message: `${eventName} in ${warningTime} Sekunden!`,
+          icon: icon,
+          timestamp: gameTime
+        };
+        setNotifications(prev => [newNotification, ...prev].slice(0, 5));
+      };
+
+      const formatTime = (seconds) => {
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+      };
+
+      const handleSpecialEvent = (event) => {
+        if (event === 'roshan') {
+          setEventTimers(prev => ({ ...prev, roshanKilled: gameTime }));
+          addNotification('Roshan Timer gestartet', '🛡️');
+        } else if (event === 'tormentor') {
+          setEventTimers(prev => ({ ...prev, tormentorKilled: gameTime }));
+          addNotification('Tormentor Timer gestartet', '⚔️');
+        }
+      };
+
+      const getDayNightStatus = () => {
+        if (gameTime < 300) return 'Tag';
+        const cycleTime = (gameTime - 300) % 600;
+        return cycleTime < 300 ? 'Nacht' : 'Tag';
+      };
+
+      const toggleAllEvents = (checked) => {
+        const newState = {};
+        Object.keys(enabledEvents).forEach(key => {
+          newState[key] = checked;
+        });
+        setEnabledEvents(newState);
+      };
+
+      return (
+        <div className="p-4 max-w-3xl mx-auto bg-gray-100 rounded-lg">
+          <div className="flex items-center justify-between mb-6 bg-white p-4 rounded-lg shadow">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => adjustTime(-60)}
+                className="p-2 rounded bg-gray-200 hover:bg-gray-300"
+              >
+                -1m
+              </button>
+              <button
+                onClick={() => adjustTime(-10)}
+                className="p-2 rounded bg-gray-200 hover:bg-gray-300"
+              >
+                -10s
+              </button>
+              <div className="text-3xl font-bold">{formatTime(gameTime)}</div>
+              <button
+                onClick={() => adjustTime(10)}
+                className="p-2 rounded bg-gray-200 hover:bg-gray-300"
+              >
+                +10s
+              </button>
+              <button
+                onClick={() => adjustTime(60)}
+                className="p-2 rounded bg-gray-200 hover:bg-gray-300"
+              >
+                +1m
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              {getDayNightStatus() === 'Tag' ? <span>☀️</span> : <span>🌙</span>}
+              <button
+                onClick={() => setIsRunning(!isRunning)}
+                className="p-2 rounded-full bg-blue-500 text-white hover:bg-blue-600"
+              >
+                {isRunning ? <Pause size={24} /> : <Play size={24} />}
+              </button>
+              <button
+                onClick={() => setGameTime(0)}
+                className="p-2 rounded-full bg-red-500 text-white hover:bg-red-600"
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-6 bg-white p-4 rounded-lg shadow">
+            <h2 className="text-lg font-bold mb-2">Bevorstehende Events:</h2>
+            <div className="flex flex-wrap gap-2">
+              {getUpcomingEvents().map(event => (
+                <div key={event.name} className="flex items-center gap-1 bg-blue-100 p-2 rounded">
+                  <span>{event.icon}</span>
+                  <span>{event.name}</span>
+                  <span className="font-mono">({formatTime(event.timeUntil)})</span>
+                </div>
+              ))}
+            </div>
+          </div>
+<Sheet>
+            <SheetTrigger asChild>
+              <button className="fixed bottom-4 right-4 p-3 bg-white rounded-full shadow-lg hover:bg-gray-100">
+                <Settings size={24} />
+              </button>
+            </SheetTrigger>
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>Einstellungen</SheetTitle>
+              </SheetHeader>
+              <div className="space-y-6 mt-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+                    <Label>Sound Effekte</Label>
+                  </div>
+                  <Switch
+                    checked={soundEnabled}
+                    onCheckedChange={setSoundEnabled}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Lautstärke</Label>
+                  <Slider
+                    value={[volume * 100]}
+                    onValueChange={(value) => setVolume(value[0] / 100)}
+                    min={0}
+                    max={100}
+                    step={1}
+                    disabled={!soundEnabled}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Warnzeit (Sekunden)</Label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={warningTime}
+                      onChange={(e) => setWarningTime(Number(e.target.value))}
+                      className="w-20 p-2 border rounded"
+                      min="1"
+                    />
+                    <span className="text-sm text-gray-500">Sekunden vor Ablauf</span>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <Label>Event Benachrichtigungen</Label>
+                  
+                  <div className="flex items-center space-x-2 mb-4">
+                    <Checkbox
+                      id="toggleAll"
+                      checked={Object.values(enabledEvents).every(v => v)}
+                      onCheckedChange={toggleAllEvents}
+                    />
+                    <label
+                      htmlFor="toggleAll"
+                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                    >
+                      Alle Events aktivieren/deaktivieren
+                    </label>
+                  </div>
+<div className="space-y-2">
+                    {regularEvents.map(event => (
+                      <div key={event.id} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={event.id}
+                          checked={enabledEvents[event.id]}
+                          onCheckedChange={(checked) => {
+                            setEnabledEvents(prev => ({
+                              ...prev,
+                              [event.id]: checked
+                            }));
+                          }}
+                        />
+                        <label
+                          htmlFor={event.id}
+                          className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                        >
+                          {event.icon} {event.name}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 border-t pt-4">
+                    <h3 className="text-sm font-medium mb-2">Spezielle Events</h3>
+                    <div className="space-y-2">
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="roshan"
+                          checked={enabledEvents.roshan}
+                          onCheckedChange={(checked) => {
+                            setEnabledEvents(prev => ({
+                              ...prev,
+                              roshan: checked
+                            }));
+                          }}
+                        />
+                        <label
+                          htmlFor="roshan"
+                          className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                        >
+                          🛡️ Roshan Timer
+                        </label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="tormentor"
+                          checked={enabledEvents.tormentor}
+                          onCheckedChange={(checked) => {
+                            setEnabledEvents(prev => ({
+                              ...prev,
+                              tormentor: checked
+                            }));
+                          }}
+                        />
+                        <label
+                          htmlFor="tormentor"
+                          className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                        >
+                          ⚔️ Tormentor Timer
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
+
+          <div className="mb-6 bg-white p-4 rounded-lg shadow">
+            <h2 className="text-lg font-bold mb-2">Event Timer:</h2>
+            <div className="flex gap-4">
+              <button
+                onClick={() => handleSpecialEvent('roshan')}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600"
+              >
+                <span>🛡️</span> Roshan getötet
+              </button>
+              <button
+                onClick={() => handleSpecialEvent('tormentor')}
+                className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600"
+              >
+                <span>⚔️</span> Tormentor getötet
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-6 bg-white p-4 rounded-lg shadow">
+            <h2 className="text-lg font-bold mb-2">Aktive Timer:</h2>
+            <div className="space-y-2">
+              {regularEvents.map(event => (
+                <div key={event.name} className="flex justify-between items-center">
+                  <span className="flex items-center gap-2">
+                    <span>{event.icon}</span>
+                    <span>{event.name}</span>
+                  </span>
+                  <span className="font-mono">
+                    in {formatTime(getTimeUntilNext(event, gameTime))}
+                  </span>
+                </div>
+              ))}
+              
+              {eventTimers.roshanKilled && (
+                <div className="flex justify-between items-center text-purple-600">
+                  <span className="flex items-center gap-2">
+                    <span>🛡️</span>
+                    <span>Roshan Respawn</span>
+                  </span>
+                  <span className="font-mono">
+                    {(() => {
+                      const timeSinceKill = gameTime - eventTimers.roshanKilled;
+                      const minRespawnTime = 8 * 60;
+                      const maxRespawnTime = 11 * 60;
+                      
+                      if (timeSinceKill < minRespawnTime) {
+                        return `${formatTime(minRespawnTime - timeSinceKill)} - ${formatTime(maxRespawnTime - timeSinceKill)}`;
+                      } else if (timeSinceKill < maxRespawnTime) {
+                        return `${formatTime(maxRespawnTime - timeSinceKill)}`;
+                      }
+                      return 'Abgelaufen';
+                    })()}
+                  </span>
+                </div>
+              )}
+              {eventTimers.tormentorKilled && (
+                <div className="flex justify-between items-center text-orange-600">
+                  <span className="flex items-center gap-2">
+                    <span>⚔️</span>
+                    <span>Tormentor Respawn</span>
+                  </span>
+                  <span className="font-mono">
+                    {(() => {
+                      const timeSinceKill = gameTime - eventTimers.tormentorKilled;
+                      const respawnTime = 10 * 60;
+                      
+                      if (timeSinceKill < respawnTime) {
+                        return formatTime(respawnTime - timeSinceKill);
+                      }
+                      return 'Abgelaufen';
+                    })()}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const App = () => {
+      return (
+        <div className="container mx-auto">
+          <DotaTimer />
+        </div>
+      );
+    };
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>

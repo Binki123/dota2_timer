@@ -115,6 +115,7 @@ const playNotificationSound = useCallback(() => {
         dayNight: true,
         roshan: true,
         tormentor: true,
+	wisdom: true,
     });
 
     // Event Definitionen
@@ -142,6 +143,13 @@ const playNotificationSound = useCallback(() => {
             interval: 120,
             checkTime: (time) => time >= 360 && time % 120 === 0,
         },
+	{
+    	    id: 'wisdom',
+    	    name: 'Wisdom Rune',
+    	    icon: '✨',
+    	    initialSpawn: 420,
+            interval: 420,
+	},
         {
             id: 'outpost',
             name: 'Outpost XP',
